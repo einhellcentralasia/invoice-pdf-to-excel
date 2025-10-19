@@ -5,3 +5,4 @@ pdfplumber
 openpyxl
 jinja2
 ghostscript
+python-multipart
