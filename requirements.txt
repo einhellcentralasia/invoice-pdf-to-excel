@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+camelot-py[cv]
+pdfplumber
+openpyxl
+jinja2
+ghostscript
