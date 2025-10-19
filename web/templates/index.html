@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Invoice PDF → Excel</title>
+  <link rel="stylesheet" href="/static/styles/style.css" />
+  <script src="/static/js/main.js" defer></script>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/" class="brand">
+      <img src="/static/images/logo.png" class="logo">
+      <span class="brand-text">Invoice PDF → Excel</span>
+    </a>
+    <div class="top-actions">
+      <button class="icon-btn" id="info-btn">ℹ️</button>
+      <button class="icon-btn" id="lang-btn">🇷🇺</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <form id="upload-form">
+      <input type="file" id="pdf" name="file" accept="application/pdf" required>
+      <button type="submit" class="btn primary">⬆️ Upload & Convert</button>
+    </form>
+    <div id="result" style="margin-top:1em;"></div>
+  </div>
+
+  <div id="info-modal" class="lock-screen" style="display:none;">
+    <div class="lock-card">
+      <h3>How it works</h3>
+      <p>Extracts the main table from your invoice PDF and exports Excel with formulas.</p>
+      <div style="display:flex; gap:10px;">
+        <img src="/static/images/before.png" style="width:48%">
+        <img src="/static/images/after.png" style="width:48%">
+      </div>
+      <button class="btn" id="close-info">Close</button>
+    </div>
+  </div>
+</body>
+</html>
