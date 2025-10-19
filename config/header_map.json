@@ -1,0 +1,12 @@
+{
+  "languages_supported": ["EN"],
+  "headers": {
+    "EN": {
+      "Art. No": ["Art. No", "Art No", "Article No", "ArtNr"],
+      "Article": ["Article", "Description"],
+      "EAN": ["EAN", "EAN Code"],
+      "Qty": ["Qty", "Quantity"],
+      "Price": ["Price", "Unit Price"]
+    }
+  }
+}
