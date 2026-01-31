@@ -36,6 +36,8 @@ const storageKeys = {
   theme: "invoicePdfTheme",
 };
 
+const API_BASE = (window.API_BASE || "").replace(/\/+$/, "");
+
 const els = {
   fileInput: document.getElementById("fileInput"),
   processBtn: document.getElementById("processBtn"),
@@ -117,7 +119,7 @@ async function handleProcess() {
   try {
     const formData = new FormData();
     formData.append("file", file, file.name);
-    const res = await fetch("/upload", {
+    const res = await fetch(`${API_BASE}/upload`, {
       method: "POST",
       body: formData,
     });
