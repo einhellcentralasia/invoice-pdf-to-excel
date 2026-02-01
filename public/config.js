@@ -1,2 +1,2 @@
-// Set your API base URL for Cloudflare Pages, e.g. "https://your-api.onrender.com"
-window.API_BASE = "";
+// Set your API base URL for Cloudflare Pages
+window.API_BASE = "https://invoice-pdf-to-excel-cloudflare.onrender.com";
