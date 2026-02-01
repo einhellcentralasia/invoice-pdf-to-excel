@@ -32,6 +32,10 @@ templates = Jinja2Templates(directory=TEMPLATE_DIR)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
 @app.post("/upload")
 async def upload(request: Request, file: UploadFile = File(...)):
     """Handles PDF upload → Excel conversion → returns file."""

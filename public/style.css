@@ -131,6 +131,22 @@ h2{margin:0 0 8px; font-size:17px; font-weight:600}
   display:inline-flex;
   overflow:hidden;
 }
+.status-pill{
+  padding:8px 12px;
+  font-weight:700;
+  font-size:12px;
+  color:var(--text);
+}
+.status-pill.ok{
+  background:rgba(127,216,167,0.15);
+  border-color:rgba(127,216,167,0.45);
+  color:#7fd8a7;
+}
+.status-pill.bad{
+  background:rgba(255,116,116,0.12);
+  border-color:rgba(255,116,116,0.45);
+  color:#ff7474;
+}
 .pill button{
   border:0;
   background:transparent;

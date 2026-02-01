@@ -13,6 +13,9 @@ const STRINGS = {
     statusError: "Error:",
     statusNoFile: "Please select a .pdf file.",
     statusDone: "Done. File is ready.",
+    statusChecking: "API: checking…",
+    statusOk: "API: online",
+    statusBad: "API: offline",
   },
   ru: {
     title: "PDF счет → Excel",
@@ -28,6 +31,9 @@ const STRINGS = {
     statusError: "Ошибка:",
     statusNoFile: "Выберите файл .pdf.",
     statusDone: "Готово. Файл готов к скачиванию.",
+    statusChecking: "API: проверка…",
+    statusOk: "API: онлайн",
+    statusBad: "API: офлайн",
   },
 };
 
@@ -44,6 +50,7 @@ const els = {
   statusMsg: document.getElementById("statusMsg"),
   downloadBtn: document.getElementById("downloadBtn"),
   themeToggle: document.getElementById("themeToggle"),
+  apiStatus: document.getElementById("apiStatus"),
 };
 
 let currentLang = "en";
@@ -73,6 +80,9 @@ function setLang(lang) {
   document.querySelectorAll("[data-lang]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.lang === lang);
   });
+  if (els.apiStatus) {
+    els.apiStatus.textContent = dict.statusChecking;
+  }
   if (els.statusMsg.textContent) {
     els.statusMsg.textContent = dict.statusReady;
     els.statusMsg.className = "msg";
@@ -146,11 +156,35 @@ async function handleProcess() {
   }
 }
 
+async function checkApiStatus() {
+  if (!els.apiStatus) return;
+  const dict = STRINGS[currentLang];
+  els.apiStatus.textContent = dict.statusChecking;
+  els.apiStatus.classList.remove("ok", "bad");
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res.ok) {
+      els.apiStatus.textContent = dict.statusOk;
+      els.apiStatus.classList.add("ok");
+    } else {
+      els.apiStatus.textContent = dict.statusBad;
+      els.apiStatus.classList.add("bad");
+    }
+  } catch (err) {
+    els.apiStatus.textContent = dict.statusBad;
+    els.apiStatus.classList.add("bad");
+  }
+}
+
 function init() {
   const savedLang = localStorage.getItem(storageKeys.lang);
   const savedTheme = localStorage.getItem(storageKeys.theme);
   setTheme(savedTheme || "dark");
   setLang(savedLang || "en");
+  checkApiStatus();
 
   const langToggle = document.querySelector(".lang-toggle");
   if (langToggle) {
