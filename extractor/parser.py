@@ -111,7 +111,7 @@ def _score_header_map(colmap: Dict[int, str]) -> Tuple[int, int]:
     return (min_score, len(mapped))
 
 
-def _find_header_row(df, max_scan: int = 6) -> Tuple[int, Dict[int, str], Tuple[int, int]]:
+def _find_header_row(df, max_scan: int = 50) -> Tuple[int, Dict[int, str], Tuple[int, int]]:
     """
     Scan the first few rows for a likely header row.
     Returns (row_index, colmap, score_tuple).
