@@ -351,6 +351,7 @@ function init() {
   setTheme(savedTheme || "dark");
   setLang(savedLang || "en");
   checkApiStatus();
+  setInterval(checkApiStatus, 60000);
 
   const langToggle = document.querySelector(".lang-toggle");
   if (langToggle) {

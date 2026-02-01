@@ -47,6 +47,7 @@ HEADER_PATTERNS = {
 }
 
 _BLOCKED_HEADER_RX = re.compile(r"\bamount\b|total\s*sum|total\s*amount|\bsum\b", re.I)
+_NUM_RX = re.compile(r"[^\d,.\-]")  # keep digits, comma, dot, minus
 
 
 def _dedupe_join(values: List[str]) -> str:
@@ -59,6 +60,31 @@ def _dedupe_join(values: List[str]) -> str:
             seen.add(v)
             out.append(v)
     return ", ".join(out)
+
+
+def _format_decimal_comma(text: str) -> str:
+    """Normalize numeric text to comma-decimal format, e.g. 1234,56."""
+    if text is None:
+        return ""
+    s = str(text).replace("\u00a0", " ").strip()
+    if not s:
+        return ""
+    s = _NUM_RX.sub("", s)
+    if not s:
+        return text
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "")
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    else:
+        s = s.replace(",", ".")
+    try:
+        val = float(s)
+    except Exception:
+        return text
+    return f"{val:.2f}".replace(".", ",")
 
 
 def _map_headers(raw_headers: List[str]) -> Dict[int, str]:
@@ -179,7 +205,10 @@ def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
             for r in range(n_rows):
                 row_data = {}
                 for canon, series in acc.items():
-                    row_data[canon] = series.iloc[r].strip()
+                    value = series.iloc[r].strip()
+                    if canon in ("Price", "Discount", "Amount"):
+                        value = _format_decimal_comma(value)
+                    row_data[canon] = value
 
                 # Skip rows that clearly have no data
                 if not any(v for v in row_data.values()):
