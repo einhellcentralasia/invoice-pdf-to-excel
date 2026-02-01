@@ -4,14 +4,20 @@ const STRINGS = {
     subtitle: "Upload → Convert → Download",
     stepTitle: "Step 1. Upload PDF",
     stepHint: "We extract items, quantities, and prices into Excel.",
-    uploadTitle: "Step 2. Download Excel",
-    uploadHint: "Upload your PDF and get a structured .xlsx file.",
+    previewTitle: "Step 2. Choose columns",
+    previewHint: "Select the columns you want to export. Page is always included.",
+    selectAll: "Select all",
+    clearAll: "Clear",
+    blockedInfo: "Amount/Total columns are not extractable.",
+    blockedNote: "Not extractable",
     processBtn: "Convert",
     downloadOutput: "Download Excel",
     statusReady: "Ready.",
+    statusPreview: "Reading headers...",
     statusProcessing: "Processing...",
     statusError: "Error:",
     statusNoFile: "Please select a .pdf file.",
+    statusNoColumns: "Select at least one column.",
     statusDone: "Done. File is ready.",
     statusChecking: "API: checking…",
     statusOk: "API: online",
@@ -22,14 +28,20 @@ const STRINGS = {
     subtitle: "Загрузка → Конвертация → Скачивание",
     stepTitle: "Шаг 1. Загрузите PDF",
     stepHint: "Мы извлекаем позиции, количества и цены в Excel.",
-    uploadTitle: "Шаг 2. Скачайте Excel",
-    uploadHint: "Загрузите PDF и получите структурированный .xlsx файл.",
+    previewTitle: "Шаг 2. Выберите колонки",
+    previewHint: "Выберите колонки для выгрузки. Страница всегда включена.",
+    selectAll: "Выбрать все",
+    clearAll: "Снять все",
+    blockedInfo: "Колонки Amount/Total недоступны для выгрузки.",
+    blockedNote: "Недоступно",
     processBtn: "Конвертировать",
     downloadOutput: "Скачать Excel",
     statusReady: "Готово.",
+    statusPreview: "Чтение заголовков...",
     statusProcessing: "Обработка...",
     statusError: "Ошибка:",
     statusNoFile: "Выберите файл .pdf.",
+    statusNoColumns: "Выберите хотя бы одну колонку.",
     statusDone: "Готово. Файл готов к скачиванию.",
     statusChecking: "API: проверка…",
     statusOk: "API: онлайн",
@@ -51,12 +63,22 @@ const els = {
   downloadBtn: document.getElementById("downloadBtn"),
   themeToggle: document.getElementById("themeToggle"),
   apiStatus: document.getElementById("apiStatus"),
+  headersList: document.getElementById("headersList"),
+  previewTable: document.getElementById("previewTable"),
+  selectAllBtn: document.getElementById("selectAllBtn"),
+  clearAllBtn: document.getElementById("clearAllBtn"),
+  blockedInfo: document.getElementById("blockedInfo"),
 };
 
 let currentLang = "en";
 let currentTheme = "dark";
 let latestBlobUrl = "";
 let latestFilename = "";
+let availableHeaders = [];
+let blockedHeaders = [];
+let sampleRows = [];
+let selectedHeaders = new Set();
+let alwaysHeaders = ["Page"];
 
 function setTheme(theme) {
   currentTheme = theme;
@@ -83,6 +105,12 @@ function setLang(lang) {
   if (els.apiStatus) {
     els.apiStatus.textContent = dict.statusChecking;
   }
+  if (els.blockedInfo) {
+    els.blockedInfo.textContent = dict.blockedInfo;
+  }
+  if (availableHeaders.length) {
+    renderHeadersList();
+  }
   if (els.statusMsg.textContent) {
     els.statusMsg.textContent = dict.statusReady;
     els.statusMsg.className = "msg";
@@ -97,6 +125,103 @@ function setStatus(message, type = "") {
 function toggleLang() {
   const next = currentLang === "en" ? "ru" : "en";
   setLang(next);
+}
+
+function setHeaders(headers, blocked, always) {
+  availableHeaders = headers || [];
+  blockedHeaders = blocked || [];
+  alwaysHeaders = always && always.length ? always : ["Page"];
+  selectedHeaders = new Set(availableHeaders.filter((h) => !blockedHeaders.includes(h)));
+  renderHeadersList();
+  renderPreviewTable();
+  updateProcessAvailability();
+}
+
+function renderHeadersList() {
+  if (!els.headersList) return;
+  els.headersList.innerHTML = "";
+
+  if (!availableHeaders.length) {
+    return;
+  }
+
+  availableHeaders.forEach((header) => {
+    const item = document.createElement("label");
+    item.className = "header-item";
+    const isBlocked = blockedHeaders.includes(header);
+    if (isBlocked) item.classList.add("disabled");
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.disabled = isBlocked;
+    checkbox.checked = selectedHeaders.has(header);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        selectedHeaders.add(header);
+      } else {
+        selectedHeaders.delete(header);
+      }
+      updateProcessAvailability();
+    });
+
+    const label = document.createElement("span");
+    label.textContent = header;
+
+    item.appendChild(checkbox);
+    item.appendChild(label);
+
+    if (isBlocked) {
+      const note = document.createElement("span");
+      note.className = "header-note";
+      note.textContent = STRINGS[currentLang].blockedNote;
+      item.appendChild(note);
+    }
+
+    els.headersList.appendChild(item);
+  });
+
+  const pageBadge = document.createElement("span");
+  pageBadge.className = "badge info";
+  pageBadge.textContent = `${alwaysHeaders.join(", ")} ${currentLang === "ru" ? "всегда включены" : "always included"}`;
+  els.headersList.appendChild(pageBadge);
+}
+
+function renderPreviewTable() {
+  if (!els.previewTable) return;
+  els.previewTable.innerHTML = "";
+  if (!availableHeaders.length) return;
+
+  const columns = [...availableHeaders];
+  alwaysHeaders.forEach((h) => {
+    if (!columns.includes(h)) columns.push(h);
+  });
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  columns.forEach((col) => {
+    const th = document.createElement("th");
+    th.textContent = col;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  els.previewTable.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  sampleRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    columns.forEach((col) => {
+      const td = document.createElement("td");
+      td.textContent = row[col] || "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  els.previewTable.appendChild(tbody);
+}
+
+function updateProcessAvailability() {
+  const hasSelection = selectedHeaders.size > 0;
+  els.processBtn.disabled = !els.fileInput.files.length || !hasSelection;
 }
 
 function revokeBlob() {
@@ -121,6 +246,10 @@ async function handleProcess() {
     setStatus(dict.statusNoFile, "error");
     return;
   }
+  if (!selectedHeaders.size) {
+    setStatus(dict.statusNoColumns, "error");
+    return;
+  }
 
   setStatus(dict.statusProcessing);
   els.processBtn.disabled = true;
@@ -129,13 +258,25 @@ async function handleProcess() {
   try {
     const formData = new FormData();
     formData.append("file", file, file.name);
+    formData.append("columns", JSON.stringify([...selectedHeaders]));
     const res = await fetch(`${API_BASE}/upload`, {
       method: "POST",
       body: formData,
     });
     if (!res.ok) {
-      const text = await res.text();
-      setStatus(`${dict.statusError} ${text || res.statusText}`, "error");
+      let message = res.statusText;
+      try {
+        const payload = await res.json();
+        if (payload && payload.error === "NO_COLUMNS") {
+          message = dict.statusNoColumns;
+        } else if (payload && payload.error) {
+          message = payload.error;
+        }
+      } catch (err) {
+        const text = await res.text();
+        if (text) message = text;
+      }
+      setStatus(`${dict.statusError} ${message}`, "error");
       return;
     }
 
@@ -179,6 +320,31 @@ async function checkApiStatus() {
   }
 }
 
+async function handlePreview(file) {
+  const dict = STRINGS[currentLang];
+  setStatus(dict.statusPreview);
+  els.downloadBtn.disabled = true;
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    const res = await fetch(`${API_BASE}/preview`, {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await res.json();
+    if (!payload.ok) {
+      setStatus(`${dict.statusError} ${payload.error || res.statusText}`, "error");
+      return;
+    }
+    sampleRows = payload.sample || [];
+    setHeaders(payload.headers || [], payload.blocked || [], payload.always || []);
+    setStatus(dict.statusReady);
+  } catch (err) {
+    setStatus(`${dict.statusError} ${err.message}`, "error");
+  }
+}
+
 function init() {
   const savedLang = localStorage.getItem(storageKeys.lang);
   const savedTheme = localStorage.getItem(storageKeys.theme);
@@ -199,11 +365,30 @@ function init() {
   });
 
   els.fileInput.addEventListener("change", () => {
-    els.processBtn.disabled = !els.fileInput.files.length;
+    const file = els.fileInput.files[0];
+    if (!file) {
+      els.processBtn.disabled = true;
+      return;
+    }
+    handlePreview(file);
   });
 
   els.processBtn.addEventListener("click", handleProcess);
   els.downloadBtn.addEventListener("click", downloadOutput);
+  if (els.selectAllBtn) {
+    els.selectAllBtn.addEventListener("click", () => {
+      selectedHeaders = new Set(availableHeaders.filter((h) => !blockedHeaders.includes(h)));
+      renderHeadersList();
+      updateProcessAvailability();
+    });
+  }
+  if (els.clearAllBtn) {
+    els.clearAllBtn.addEventListener("click", () => {
+      selectedHeaders = new Set();
+      renderHeadersList();
+      updateProcessAvailability();
+    });
+  }
 }
 
 window.addEventListener("DOMContentLoaded", init);

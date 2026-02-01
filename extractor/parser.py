@@ -11,62 +11,42 @@ Key fixes vs. first cut:
 """
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import camelot
 import pdfplumber
 import openpyxl
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
 
-# ---- Canonical schema (always exported) ----
+# ---- Canonical schema (detected) ----
 MIN_COLUMNS = ["Art. No", "Qty", "Price"]
-ALWAYS_COLUMNS = ["Page", "AU / Invoice", "Sum"]
-CANONICAL = MIN_COLUMNS + ALWAYS_COLUMNS
+CANONICAL_ORDER = [
+    "Pos",
+    "Art. No",
+    "Article",
+    "EAN",
+    "Qty",
+    "Price",
+    "Discount",
+    "Cust. ItemNo",
+    "Amount",
+]
+ALWAYS_COLUMNS = ["Page"]
 
 # Header patterns (lenient, case-insensitive)
 HEADER_PATTERNS = {
+    "Pos": re.compile(r"\bpos\b|\bposition\b", re.I),
     "Art. No": re.compile(r"\bart\.?\s*no\.?\b|\bart(?:icle)?\s*no\b|\bartnr\b", re.I),
     "Article": re.compile(r"\barticle\b|\bdescription\b", re.I),
     "EAN":     re.compile(r"\bean\b|\bean[-\s]*code\b", re.I),
     "Qty":     re.compile(r"\bqty\b|\bquantity\b", re.I),
     "Price":   re.compile(r"\bprice\b|\bunit\s*price\b|\bpreis\b", re.I),
+    "Discount": re.compile(r"\bdiscount\b|\brabatt\b", re.I),
+    "Amount": re.compile(r"\bamount\b|\btotal\s*amount\b|\btotal\b|\bsum\b|\bgesamt\b", re.I),
+    "Cust. ItemNo": re.compile(r"\bcust\.?\s*item\s*no\b|\bcustomer\s*item\s*no\b|\bcust\.?\s*itemno\b", re.I),
     # We don’t export Discount/Amount now, but detector tolerates them.
 }
 
-UNAVAILABLE_RX = re.compile(r"not\s+available|sold\s+out", re.I)
-NUM_SANITIZE_RX = re.compile(r"[^\d,.\-]")  # keep digits, comma, dot, minus
-
-
-# ------------- Helpers -------------
-def _normalize_number(text: str):
-    """Normalize numbers like '1 109,20' → '1109.20' ; returns None if not parseable."""
-    if text is None:
-        return None
-    s = str(text)
-    s = s.replace("\u00a0", " ").strip()
-    # if the cell contains obvious unavailability text → return None (caller sets 0)
-    if UNAVAILABLE_RX.search(s):
-        return None
-    # strip all but digits, comma, dot, minus
-    s = NUM_SANITIZE_RX.sub("", s)
-    if not s:
-        return None
-    # heuristic: if both comma and dot present, assume comma=decimals if comma comes last
-    if "," in s and "." in s:
-        # remove thousand separators heuristically
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "")
-            s = s.replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    else:
-        # common EU: spaces already stripped; turn comma into dot
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return None
+_BLOCKED_HEADER_RX = re.compile(r"\bamount\b|total\s*sum|total\s*amount|\bsum\b", re.I)
 
 
 def _dedupe_join(values: List[str]) -> str:
@@ -121,26 +101,22 @@ def _find_header_row(df, max_scan: int = 6) -> Tuple[int, Dict[int, str], Tuple[
     return best
 
 
-def _formula_sep() -> str:
-    """Allow override of Excel formula separator via env, default to ';'."""
-    import os
-    return os.getenv("EXCEL_FORMULA_SEP", ";")
-
-
 def _extract_au_invoice(page_text_top: str) -> str:
     au = re.findall(r"\bAU\d{7,8}\b", page_text_top)  # AUxxxxxxx
     inv = re.findall(r"(?:Invoice\s*No[:\s]*)([A-Z0-9\-]+)", page_text_top, flags=re.I)
     return _dedupe_join(au + inv)
 
 
+def is_blocked_header(header: str) -> bool:
+    return bool(_BLOCKED_HEADER_RX.search(header or ""))
+
+
 # ------------- Main entry -------------
-def extract_pdf_to_excel(pdf_path: str, output_path: str) -> str:
-    """
-    Extracts item rows from all pages and writes a single Excel with:
-      Main table + Page summary + AU/Invoice summary
-    """
+def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
+    """Extract item rows from all pages and return (rows, headers_found)."""
     all_rows: List[Dict[str, object]] = []
     logs: List[str] = []
+    headers_found: set = set()
 
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
@@ -191,7 +167,7 @@ def extract_pdf_to_excel(pdf_path: str, output_path: str) -> str:
 
             # rename columns to canonical names
             df = df.iloc[header_row + 1:].reset_index(drop=True)  # drop header row
-            # Build new columns: start with canonical we care about; ignore others
+            headers_found.update(colmap.values())
             # build a small accessor map: canon -> series
             acc = {}
             for idx, canon in colmap.items():
@@ -201,38 +177,45 @@ def extract_pdf_to_excel(pdf_path: str, output_path: str) -> str:
             n_rows = len(df)
             added = 0
             for r in range(n_rows):
-                art = acc["Art. No"].iloc[r].strip() if "Art. No" in acc else ""
-                qty_raw = acc["Qty"].iloc[r].strip() if "Qty" in acc else ""
-                price_raw = acc["Price"].iloc[r].strip() if "Price" in acc else ""
+                row_data = {}
+                for canon, series in acc.items():
+                    row_data[canon] = series.iloc[r].strip()
 
-                # detect 'not available' anywhere across row text (fallback)
-                row_concat = " ".join(col.iloc[r] for col in acc.values()).lower()
-                qty_val = 0.0
-                price_val = 0.0
-
-                if UNAVAILABLE_RX.search(qty_raw) or UNAVAILABLE_RX.search(row_concat):
-                    qty_val = 0.0
-                else:
-                    nv = _normalize_number(qty_raw)
-                    qty_val = nv if nv is not None else 0.0
-
-                pv = _normalize_number(price_raw)
-                price_val = pv if pv is not None else 0.0
-
-                # Skip rows that clearly have no Art.No and no numeric signals
-                if not art and qty_val == 0 and price_val == 0:
+                # Skip rows that clearly have no data
+                if not any(v for v in row_data.values()):
                     continue
 
-                all_rows.append({
-                    "Art. No": art,
-                    "Qty": int(qty_val) if qty_val.is_integer() else qty_val,
-                    "Price": price_val,
-                    "Page": i,
-                    "AU / Invoice": au_invoice,
-                })
+                row_data["Page"] = i
+                row_data["AU / Invoice"] = au_invoice
+                all_rows.append(row_data)
                 added += 1
 
             logs.append(f"p{i}: added {added} rows")
+
+    headers_ordered = [h for h in CANONICAL_ORDER if h in headers_found]
+    if any(r.get("AU / Invoice") for r in all_rows):
+        headers_ordered.append("AU / Invoice")
+    return all_rows, headers_ordered
+
+
+def extract_pdf_to_excel(
+    pdf_path: str,
+    output_path: str,
+    selected_columns: Optional[List[str]] = None,
+) -> str:
+    """Extracts item rows from all pages and writes a single Excel with plain values."""
+    all_rows, headers = extract_pdf_rows(pdf_path)
+
+    # Filter selected columns, but always keep Page
+    if selected_columns:
+        selected_set = [c for c in selected_columns if c in headers]
+    else:
+        selected_set = headers
+
+    if "Page" in selected_set:
+        selected_set = [c for c in selected_set if c != "Page"]
+
+    final_headers = selected_set + ["Page"]
 
     # ---------- Write Excel ----------
     wb = openpyxl.Workbook()
@@ -240,56 +223,12 @@ def extract_pdf_to_excel(pdf_path: str, output_path: str) -> str:
     ws.title = "Main"
 
     # header
-    ws.append(CANONICAL)
+    ws.append(final_headers)
 
-    # data + live Sum formulas (respecting ; as separator for your Excel)
-    formula_sep = _formula_sep()
+    # data rows (plain text values)
     for row_idx, r in enumerate(all_rows, start=2):
-        ws.cell(row=row_idx, column=1, value=r["Art. No"])
-        ws.cell(row=row_idx, column=2, value=r["Qty"])
-        ws.cell(row=row_idx, column=3, value=r["Price"])
-        ws.cell(row=row_idx, column=4, value=r["Page"])
-        ws.cell(row=row_idx, column=5, value=r["AU / Invoice"])
-        # Sum formula uses local ; and references current row
-        ws.cell(row=row_idx, column=6, value=f"=IFERROR(B{row_idx}*C{row_idx}{formula_sep}0)")
-
-    # style as table
-    if len(all_rows) > 0:
-        tab = Table(displayName="MainTable", ref=f"A1:{get_column_letter(len(CANONICAL))}{len(all_rows)+1}")
-        tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
-        ws.add_table(tab)
-
-    # two blank cols then Page summary
-    offset_col = len(CANONICAL) + 2
-    ws.cell(row=1, column=offset_col, value="Page")
-    ws.cell(row=1, column=offset_col + 1, value="Sum")
-
-    if len(all_rows) > 0:
-        pages_sorted = sorted({r["Page"] for r in all_rows})
-        page_col_letter = get_column_letter(CANONICAL.index("Page") + 1)
-        sum_col_letter = get_column_letter(CANONICAL.index("Sum") + 1)
-        criteria_col_letter = get_column_letter(offset_col)
-        for idx, p in enumerate(pages_sorted, start=2):
-            ws.cell(row=idx, column=offset_col, value=p)
-            ws.cell(row=idx, column=offset_col + 1,
-                    value=f"=SUMIF({page_col_letter}:{page_col_letter}{formula_sep}{criteria_col_letter}{idx}{formula_sep}{sum_col_letter}:{sum_col_letter})")
-
-    # two blank cols, then AU/Invoice summary (skip empty AU values)
-    offset_col2 = offset_col + 4
-    ws.cell(row=1, column=offset_col2, value="AU / Invoice")
-    ws.cell(row=1, column=offset_col2 + 1, value="Sum")
-
-    if len(all_rows) > 0:
-        au_col_letter = get_column_letter(CANONICAL.index("AU / Invoice") + 1)
-        criteria_col_letter = get_column_letter(offset_col2)
-        # unique non-empty AU/Invoice values
-        au_vals = [r["AU / Invoice"] for r in all_rows if str(r.get("AU / Invoice", "")).strip()]
-        uniq_au = sorted(set(au_vals))
-        base_row = 2
-        for j, au in enumerate(uniq_au, start=base_row):
-            ws.cell(row=j, column=offset_col2, value=au)
-            ws.cell(row=j, column=offset_col2 + 1,
-                    value=f"=SUMIF({au_col_letter}:{au_col_letter}{formula_sep}{criteria_col_letter}{j}{formula_sep}{sum_col_letter}:{sum_col_letter})")
+        for col_idx, header in enumerate(final_headers, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=r.get(header, ""))
 
     # save file
     wb.save(output_path)
