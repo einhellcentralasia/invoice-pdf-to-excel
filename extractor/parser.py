@@ -111,13 +111,13 @@ def _score_header_map(colmap: Dict[int, str]) -> Tuple[int, int]:
     return (min_score, len(mapped))
 
 
-def _find_header_row(df, max_scan: int = 50) -> Tuple[int, Dict[int, str], Tuple[int, int]]:
+def _find_header_row(df, max_scan: int = 0) -> Tuple[int, Dict[int, str], Tuple[int, int]]:
     """
     Scan the first few rows for a likely header row.
     Returns (row_index, colmap, score_tuple).
     """
     best = (-1, {}, (0, 0))
-    scan_rows = min(max_scan, len(df))
+    scan_rows = len(df) if max_scan <= 0 else min(max_scan, len(df))
     for r in range(scan_rows):
         raw_headers = [(" ".join(str(x).split())).strip() for x in list(df.iloc[r])]
         colmap = _map_headers(raw_headers)
@@ -137,12 +137,33 @@ def is_blocked_header(header: str) -> bool:
     return bool(_BLOCKED_HEADER_RX.search(header or ""))
 
 
+def _add_no_data_row(
+    all_rows: List[Dict[str, object]],
+    headers_found: set,
+    primary_header: Optional[str],
+    page_num: int,
+) -> None:
+    """Add a placeholder row for pages where no table data was found."""
+    message = f"No data on page {page_num}"
+    row = {"Page": page_num}
+    if primary_header:
+        row[primary_header] = message
+    elif headers_found:
+        first = next(iter(headers_found))
+        row[first] = message
+    else:
+        row["Article"] = message
+        headers_found.add("Article")
+    all_rows.append(row)
+
+
 # ------------- Main entry -------------
 def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
     """Extract item rows from all pages and return (rows, headers_found)."""
     all_rows: List[Dict[str, object]] = []
     logs: List[str] = []
     headers_found: set = set()
+    primary_header: Optional[str] = None
 
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
@@ -180,11 +201,13 @@ def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
 
             if not best:
                 logs.append(f"p{i}: table empty/short")
+                _add_no_data_row(all_rows, headers_found, primary_header, i)
                 continue
 
             # require at least our minimal set present
             if best["score"][0] < len(MIN_COLUMNS):
                 logs.append(f"p{i}: header mapping incomplete → {best['colmap']}")
+                _add_no_data_row(all_rows, headers_found, primary_header, i)
                 continue
 
             df = best["df"]
@@ -194,6 +217,11 @@ def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
             # rename columns to canonical names
             df = df.iloc[header_row + 1:].reset_index(drop=True)  # drop header row
             headers_found.update(colmap.values())
+            if primary_header is None:
+                for h in CANONICAL_ORDER:
+                    if h in headers_found:
+                        primary_header = h
+                        break
             # build a small accessor map: canon -> series
             acc = {}
             for idx, canon in colmap.items():
@@ -219,7 +247,11 @@ def extract_pdf_rows(pdf_path: str) -> Tuple[List[Dict[str, str]], List[str]]:
                 all_rows.append(row_data)
                 added += 1
 
-            logs.append(f"p{i}: added {added} rows")
+            if added == 0:
+                _add_no_data_row(all_rows, headers_found, primary_header, i)
+                logs.append(f"p{i}: no data rows")
+            else:
+                logs.append(f"p{i}: added {added} rows")
 
     headers_ordered = [h for h in CANONICAL_ORDER if h in headers_found]
     if any(r.get("AU / Invoice") for r in all_rows):
